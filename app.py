@@ -114,6 +114,3 @@ with open('app.py', 'w') as f:
     f.write(app_code)
 
 print("app.py created!")
-
-from google.colab import files
-files.download('app.py')
