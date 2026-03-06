@@ -32,68 +32,82 @@ def generate_forecast(hourly_data):
 
 forecast_df = generate_forecast(hourly_data)
 
-# App layout
+# Business hours only (11am - 8pm)
+BUSINESS_HOURS = list(range(11, 21))
+hour_labels = ['11 AM', '12 PM', '1 PM', '2 PM', '3 PM', '4 PM', '5 PM', '6 PM', '7 PM', '8 PM']
+
 st.title("🍜 Customer Traffic Dashboard")
 
-# Date picker
+# Top row: date picker | peak hour
+col_left, col_right = st.columns([1, 1])
+
 all_dates = pd.concat([
     pd.Series(hourly_data.index.normalize().unique()),
     pd.Series(forecast_df.index.normalize().unique())
 ]).drop_duplicates().sort_values()
 
-selected_date = st.date_input(
-    "Select Date for Prediction:",
-    value=forecast_df.index.normalize().unique()[0],
-    min_value=all_dates.min(),
-    max_value=all_dates.max()
-)
+with col_left:
+    selected_date = st.date_input(
+        "Select a date",
+        value=forecast_df.index.normalize().unique()[0],
+        min_value=all_dates.min(),
+        max_value=all_dates.max()
+    )
 
 selected_date = pd.Timestamp(selected_date)
 is_forecast = selected_date in forecast_df.index.normalize()
 
 if is_forecast:
     day_data = forecast_df[forecast_df.index.normalize() == selected_date]['predicted_guests']
-    hist_data = None
+    label = "Predicted # of Guests"
+    tag = "📅 Forecast"
 else:
     day_data = hourly_data[hourly_data.index.normalize() == selected_date]['# of Guests']
-    hist_data = None
+    label = "Actual # of Guests"
+    tag = "📋 Historical"
 
-# Calculate historical average for the same day of week
-dow = selected_date.dayofweek
-hist_avg = hourly_data[hourly_data.index.dayofweek == dow].groupby(hourly_data[hourly_data.index.dayofweek == dow].index.hour)['# of Guests'].mean()
+# Filter to business hours only
+day_data_biz = day_data[day_data.index.hour.isin(BUSINESS_HOURS)]
 
-# Metrics
-total_guests = int(day_data.sum())
-peak_hour_val = day_data.idxmax() if day_data.sum() > 0 else None
-peak_hour_str = f"{peak_hour_val.strftime('%I %p')}" if peak_hour_val else "N/A"
-staff_hours = round(total_guests * 0.75)
+# Peak hour
+if not day_data_biz.empty and day_data_biz.sum() > 0:
+    peak_hour = day_data_biz.idxmax()
+    peak_hour_str = peak_hour.strftime('%I:%M %p').lstrip('0')
+    peak_guests = round(day_data_biz.max(), 1)
+else:
+    peak_hour_str = 'N/A'
+    peak_guests = 0
 
+with col_right:
+    st.metric("🔥 Predicted Peak Hour", peak_hour_str, f"{peak_guests} guests")
+
+# Summary metrics
+st.subheader(f"{tag} — {selected_date.strftime('%A, %B %d %Y')}")
 col1, col2, col3 = st.columns(3)
-col1.metric("📅 Selected Date", selected_date.strftime('%m/%d/%Y'))
-col2.metric("🔵 Predicted Peak Traffic", f"{total_guests} customers")
-col3.metric("🟢 Suggested Labor (Hours)", f"{staff_hours} staff-hours")
+col1.metric("Total Guests", int(day_data_biz.sum()))
+col2.metric("Avg Guests/Hour", round(day_data_biz.mean(), 2))
+col3.metric("Busiest Period", "Lunch" if day_data_biz.idxmax().hour < 15 else "Dinner" if not day_data_biz.empty and day_data_biz.sum() > 0 else "N/A")
 
-# Chart
-st.subheader(f"Hourly Traffic for {selected_date.strftime('%a %b %d %Y')}")
-
-fig, ax = plt.subplots(figsize=(12, 5))
-
-hours = range(24)
-predicted_vals = [day_data[day_data.index.hour == h].values[0] if h in day_data.index.hour else 0 for h in hours]
-hist_vals = [hist_avg[h] if h in hist_avg.index else 0 for h in hours]
-
-x = np.arange(24)
-width = 0.4
-
-ax.bar(x - width/2, predicted_vals, width, label='Predicted Traffic', color='steelblue')
-ax.bar(x + width/2, hist_vals, width, label='Historical Average', color='lightgray')
-
-ax.set_xticks(x)
-ax.set_xticklabels([f"{h}h" for h in hours], rotation=45)
-ax.set_ylabel("Number of Customers")
-ax.set_xlabel("Hour")
-ax.legend()
-ax.set_title(f"Hourly Traffic for {selected_date.strftime('%a %b %d %Y')}")
-plt.tight_layout()
+# Bar chart - business hours only
+st.subheader("Hourly Traffic (11 AM – 8 PM)")
+fig, ax = plt.subplots(figsize=(12, 4))
+values = [day_data_biz[day_data_biz.index.hour == h].values[0] if len(day_data_biz[day_data_biz.index.hour == h]) > 0 else 0 for h in BUSINESS_HOURS]
+ax.bar(range(len(BUSINESS_HOURS)), values, color=[
+    'green' if v < 2 else 'orange' if v < 4 else 'red' for v in values
+])
+ax.set_xticks(range(len(BUSINESS_HOURS)))
+ax.set_xticklabels(hour_labels, rotation=30)
+ax.set_ylabel(label)
+ax.set_title(f"Hourly Traffic — {selected_date.strftime('%A, %B %d %Y')}")
 st.pyplot(fig)
 
+# Weekly forecast overview
+st.subheader("📊 7-Day Forecast Overview")
+weekly = forecast_df.groupby(forecast_df.index.normalize())['predicted_guests'].sum()
+fig2, ax2 = plt.subplots(figsize=(10, 4))
+ax2.bar(range(len(weekly)), weekly.values, color='orange')
+ax2.set_xticks(range(len(weekly)))
+ax2.set_xticklabels([d.strftime('%a %b %d') for d in weekly.index], rotation=30)
+ax2.set_ylabel("Total Predicted Guests")
+ax2.set_title("Total Predicted Guests per Day (Next 7 Days)")
+st.pyplot(fig2)
